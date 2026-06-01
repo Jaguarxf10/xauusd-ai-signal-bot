@@ -1,102 +1,94 @@
 """
-Signal Engine - Claude AI + Web Search orqali real XAU/USD tahlil
+Signal Engine — Haiku model, arzon, tez
 """
-import json
-import re
-import httpx
-import logging
+import json, re, httpx, logging
 from datetime import datetime
 import pytz
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Sen professional XAU/USD (Oltin/Dollar) savdo eksperti va texnik tahlilchisan.
-Web search orqali HOZIRGI real vaqtdagi XAU/USD narxini, indikatorlarni topib tahlil qil.
+# Arzon model — Haiku (Sonnet dan 10x arzon)
+MODEL = "claude-haiku-4-5"
 
-TAHLIL (barchasi birga baholansin):
-RSI(14), MACD(12,26,9), Bollinger Bands, EMA 9/21/50, Stochastic, ATR,
-Support/Resistance darajalari, Candle patterns, Market struktura, Volume
+SYSTEM_PROMPT = """Sen XAU/USD M5 texnik tahlilchisan. Web search bilan hozirgi narx va indikatorlarni topib, FAQAT JSON qaytargin.
 
-SIGNAL MEZONLARI:
-- Faqat 75%+ kuchli signallarda signal_found: true ber
-- Kamida 6-7 indikator bir yo'nalishni ko'rsatishi kerak
-- Agar bozor neytral yoki aralash bo'lsa signal_found: false ber
+Signal mezonlari (barchasi kerak):
+- RSI, MACD, EMA, Bollinger, Stochastic bir yo'nalishda
+- Faqat 75%+ kuchli signal bering
+- Trend yo'nalishiga mos bo'lsin
 
-MUHIM: Javobingning oxirida FAQAT quyidagi formatda bitta JSON blok bo'lsin (boshqa hech narsa yo'q):
+Kuchli signal topilsa:
+{"signal_found":true,"direction":"BUY","strength":82,"strength_stars":4,"entry_zone":"3320.00-3322.00","tp1":"3330.00","tp1_pips":30,"tp2":"3342.00","tp2_pips":60,"tp3":"3358.00","tp3_pips":110,"stop_loss":"3308.00","sl_pips":24,"risk_level":"PAST","rr_ratio":"2.5","analysis_summary":"RSI 28 oversold, MACD bullish cross, EMA50 support","invalidation":"3308 dan past tushsa"}
 
-Signal bo'lsa:
-{"signal_found": true, "direction": "BUY", "strength": 82, "strength_stars": 4, "entry_zone": "4535.00-4537.00", "tp1": "4545.00", "tp1_pips": 20, "tp2": "4558.00", "tp2_pips": 45, "tp3": "4575.00", "tp3_pips": 80, "stop_loss": "4523.00", "sl_pips": 25, "risk_level": "PAST", "rr_ratio": "1:3.2", "analysis_summary": "RSI 28 oversold, MACD bullish cross, EMA21 support", "invalidation": "4523 dan past tushsa bekor"}
+Signal yo'q bo'lsa:
+{"signal_found":false,"reason":"Sabab"}
 
-Signal bo'lmasa:
-{"signal_found": false, "reason": "Indikatorlar aralash/neytral"}"""
+FAQAT JSON, hech qanday matn yo'q."""
 
 
 class SignalEngine:
     def __init__(self, api_key: str):
-        self.api_key = api_key
+        self.api_key  = api_key
         self.open_trades = []
         self.tz = pytz.timezone("Asia/Tashkent")
 
-    def _headers(self):
+    def _hdrs(self):
         return {
-            'x-api-key': self.api_key,
-            'anthropic-version': '2023-06-01',
-            'content-type': 'application/json'
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
         }
+
+    def _parse(self, text: str) -> dict | None:
+        clean = re.sub(r'```json|```', '', text).strip()
+        m = re.search(r'\{.*\}', clean, re.DOTALL)
+        if not m:
+            return None
+        try:
+            return json.loads(m.group())
+        except Exception:
+            return None
 
     async def analyze(self) -> dict | None:
         try:
             now = datetime.now(self.tz)
-            user_msg = f"""Vaqt: {now.strftime('%Y-%m-%d %H:%M')} (Toshkent).
-XAU/USD M5 texnik tahlil qil. Web search bilan hozirgi narx va indikatorlarni top.
-Tahlildan so'ng oxirida faqat JSON ber."""
-
-            async with httpx.AsyncClient(timeout=60) as client:
-                resp = await client.post(
-                    'https://api.anthropic.com/v1/messages',
-                    headers=self._headers(),
+            h   = now.hour
+            session = (
+                "London ochilishi" if 5 <= h < 10 else
+                "London+NY overlap (eng faol)" if 10 <= h < 15 else
+                "New York" if 15 <= h < 19 else
+                "NY/Osiyo"
+            )
+            user_msg = (
+                f"Vaqt: {now.strftime('%d.%m.%Y %H:%M')} Toshkent | Sessiya: {session}\n"
+                f"Web search bilan hozirgi XAU/USD M5 narxi va indikatorlarni topib tahlil qil. FAQAT JSON."
+            )
+            async with httpx.AsyncClient(timeout=50) as c:
+                r = await c.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=self._hdrs(),
                     json={
-                        'model': 'claude-sonnet-4-6',
-                        'max_tokens': 2000,
-                        'system': SYSTEM_PROMPT,
-                        'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}],
-                        'messages': [{'role': 'user', 'content': user_msg}]
+                        "model": MODEL,
+                        "max_tokens": 600,
+                        "system": SYSTEM_PROMPT,
+                        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                        "messages": [{"role": "user", "content": user_msg}]
                     }
                 )
-                resp.raise_for_status()
-                data = resp.json()
+                r.raise_for_status()
+                data = r.json()
 
-            # Barcha text bloklarni birlashtirish
-            full_text = ''.join(
-                block.get('text', '')
-                for block in data.get('content', [])
-                if block.get('type') == 'text'
-            )
+            text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+            result = self._parse(text)
 
-            if not full_text.strip():
+            if not result or not result.get("signal_found"):
+                logger.info(f"Signal yo'q: {result.get('reason','') if result else 'parse xatosi'}")
+                return None
+            if result.get("strength", 0) < 75:
                 return None
 
-            # Oxirgi JSON blokni topish
-            matches = re.findall(r'\{[^{}]*"signal_found"[^{}]*\}', full_text, re.DOTALL)
-            if not matches:
-                # Katta JSON bloklarni ham qidirish
-                matches = re.findall(r'\{.*?"signal_found".*?\}', full_text, re.DOTALL)
-
-            if not matches:
-                logger.info(f"JSON topilmadi. Javob: {full_text[-300:]}")
-                return None
-
-            result = json.loads(matches[-1])  # Oxirgi JSON ni ol
-
-            if not result.get('signal_found'):
-                logger.info(f"Signal yo'q: {result.get('reason', '—')}")
-                return None
-
-            if result.get('strength', 0) < 75:
-                return None
-
-            result['timestamp'] = now.strftime('%d.%m.%Y %H:%M')
-            result['status'] = 'OPEN'
+            result["timestamp"] = now.strftime("%d.%m.%Y %H:%M")
+            result["status"]    = "OPEN"
             self.open_trades.append(result.copy())
             return result
 
@@ -104,77 +96,120 @@ Tahlildan so'ng oxirida faqat JSON ber."""
             logger.error(f"Tahlil xatosi: {e}")
             return None
 
-    async def check_open_trades(self) -> list:
+    async def check_open_trades(self) -> list[str]:
+        """Ochiq sdelkalarni narx bilan tekshiradi (arzon: faqat narx so'raydi)."""
         if not self.open_trades:
             return []
+
+        # Hozirgi narxni olish (1 ta kichik so'rov)
+        current_price = await self._get_current_price()
+        if not current_price:
+            return []
+
         messages = []
-        closed = []
+        closed   = []
+
         for trade in self.open_trades:
-            upd = await self._check_trade_status(trade)
-            if upd:
-                messages.append(upd)
+            msg = self._check_price(trade, current_price)
+            if msg:
+                messages.append(msg)
                 closed.append(trade)
+
         for t in closed:
-            if t in self.open_trades:
-                self.open_trades.remove(t)
+            self.open_trades.remove(t)
+
         return messages
 
-    async def _check_trade_status(self, trade: dict) -> str | None:
+    async def _get_current_price(self) -> float | None:
+        """Web search bilan hozirgi XAU/USD narxini oladi."""
         try:
-            prompt = f"""Ochiq sdelka: {trade['direction']} XAU/USD
-Kirish: {trade['entry_zone']}, TP1:{trade['tp1']}, TP2:{trade['tp2']}, TP3:{trade['tp3']}, SL:{trade['stop_loss']}
-
-Hozirgi XAU/USD narxini web search bilan tekshirib, holat baho:
-Faqat JSON: {{"status": "no_update"}} yoki {{"status": "tp1_hit|tp2_hit|tp1_near|sl_risk|close_now", "message": "o'zbek tilida xabar"}}"""
-
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
-                    'https://api.anthropic.com/v1/messages',
-                    headers=self._headers(),
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers=self._hdrs(),
                     json={
-                        'model': 'claude-sonnet-4-6',
-                        'max_tokens': 400,
-                        'tools': [{'type': 'web_search_20250305', 'name': 'web_search'}],
-                        'messages': [{'role': 'user', 'content': prompt}]
+                        "model": MODEL,
+                        "max_tokens": 50,
+                        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+                        "messages": [{"role": "user", "content":
+                            "XAU/USD current price right now. Reply ONLY with the number, e.g.: 3325.50"}]
                     }
                 )
-                data = resp.json()
-
-            text = ''.join(b.get('text', '') for b in data.get('content', []) if b.get('type') == 'text')
-            match = re.search(r'\{[^{}]*"status"[^{}]*\}', text, re.DOTALL)
-            if not match:
-                return None
-            result = json.loads(match.group())
-            status = result.get('status', 'no_update')
-            if status == 'no_update':
-                return None
-            return self._format_trade_update(trade, status, result.get('message', ''))
+                data = r.json()
+                text = "".join(b.get("text","") for b in data.get("content",[]) if b.get("type")=="text")
+                m = re.search(r'\d{3,4}\.?\d{0,2}', text)
+                return float(m.group()) if m else None
         except Exception as e:
-            logger.error(f"Sdelka tekshirish xatosi: {e}")
+            logger.error(f"Narx olish xatosi: {e}")
             return None
 
-    def _format_trade_update(self, trade: dict, status: str, message: str) -> str:
-        direction = "🟢 BUY" if trade["direction"] == "BUY" else "🔴 SELL"
-        status_map = {
-            "tp1_near":  ("🎯", "TP1 yaqinlashmoqda!"),
-            "tp1_hit":   ("✅", "TP1 OLINDI!"),
-            "tp2_hit":   ("✅✅", "TP2 OLINDI!"),
-            "sl_risk":   ("⚠️", "SL xavfi bor!"),
-            "close_now": ("🔔", "Sdelkani YOPING!"),
-        }
-        emoji, title = status_map.get(status, ("ℹ️", "Yangilik"))
-        msg = (
-            f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-            f"<b>{emoji} {title}</b>\n"
-            f"<b>XAU/USD · {direction}</b>\n"
-            f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-            f"{message}\n\n"
-        )
+    def _check_price(self, trade: dict, price: float) -> str | None:
+        """Narxni TP/SL bilan solishtiradi — AI siz."""
+        try:
+            direction = trade["direction"]
+            tp1 = float(trade["tp1"])
+            tp2 = float(trade["tp2"])
+            sl  = float(trade["stop_loss"])
+            entry_str = trade["entry_zone"].split("-")[0]
+            entry = float(entry_str)
+
+            now = datetime.now(self.tz).strftime("%H:%M")
+
+            if direction == "BUY":
+                if price >= tp2:
+                    trade["status"] = "TP2"
+                    return self._fmt_update(trade, "tp2_hit", price, now)
+                if price >= tp1:
+                    trade["status"] = "TP1"
+                    return self._fmt_update(trade, "tp1_hit", price, now)
+                if price <= sl:
+                    trade["status"] = "SL"
+                    return self._fmt_update(trade, "sl_hit", price, now)
+            else:  # SELL
+                if price <= tp2:
+                    trade["status"] = "TP2"
+                    return self._fmt_update(trade, "tp2_hit", price, now)
+                if price <= tp1:
+                    trade["status"] = "TP1"
+                    return self._fmt_update(trade, "tp1_hit", price, now)
+                if price >= sl:
+                    trade["status"] = "SL"
+                    return self._fmt_update(trade, "sl_hit", price, now)
+        except Exception as e:
+            logger.error(f"Narx tekshirish xatosi: {e}")
+        return None
+
+    def _fmt_update(self, trade: dict, status: str, price: float, now: str) -> str:
+        d = "🟢 BUY" if trade["direction"] == "BUY" else "🔴 SELL"
         if status == "tp1_hit":
-            msg += "💡 <b>TAVSIYA:</b>\n✔️ SL ni kirish nuqtasiga (bez ubitkaga) olib boring!\n✔️ Qolganini TP2/TP3 ga qoldiring.\n"
+            return (
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+                f"<b>✅ TP1 OLINDI!</b>  {d}\n"
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+                f"Narx: <code>{price}</code>  →  TP1: <code>{trade['tp1']}</code>\n\n"
+                f"💡 <b>TAVSIYA:</b>\n"
+                f"✔️ SL ni kirish nuqtasiga (BEZ UBYTOK) oling!\n"
+                f"✔️ Qolgan pozitsiyani TP2/TP3 ga qoldiring.\n\n"
+                f"<i>🕐 {now}</i>"
+            )
         elif status == "tp2_hit":
-            msg += "💡 <b>TAVSIYA:</b>\n✔️ Pozitsiyaning bir qismini yopin!\n✔️ SL ni TP1 ga ko'taring.\n"
-        elif status == "close_now":
-            msg += "⚡ <b>Bozor holati o'zgardi — sdelkani yopin!</b>\n"
-        msg += f"\n<i>🕐 {datetime.now(pytz.timezone('Asia/Tashkent')).strftime('%H:%M')}</i>"
-        return msg
+            return (
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+                f"<b>✅✅ TP2 OLINDI!</b>  {d}\n"
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+                f"Narx: <code>{price}</code>  →  TP2: <code>{trade['tp2']}</code>\n\n"
+                f"💡 <b>TAVSIYA:</b>\n"
+                f"✔️ Pozitsiyaning yarmi yopilsin!\n"
+                f"✔️ SL ni TP1 darajasiga ko'taring.\n"
+                f"✔️ Qolganini TP3 ga qoldiring.\n\n"
+                f"<i>🕐 {now}</i>"
+            )
+        else:  # sl_hit
+            return (
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+                f"<b>🛑 STOP LOSS URILDI!</b>  {d}\n"
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+                f"Narx: <code>{price}</code>  →  SL: <code>{trade['stop_loss']}</code>\n\n"
+                f"<i>Risk menejment to'g'ri ishladi. Keyingi signal kuting.</i>\n\n"
+                f"<i>🕐 {now}</i>"
+            )

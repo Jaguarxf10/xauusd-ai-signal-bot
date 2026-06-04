@@ -1,35 +1,51 @@
 """
-Signal Engine — Haiku model, arzon, tez
+Multi-Pair Signal Engine
+- Juftlar: XAU/USD, BTC/USD, EUR/USD
+- Kotta TF tahlil: 1D → 4H → 1H → 30M (trend filtri)
+- Kirish TF: 15M, 5M, 1M
+- Filtr: 75%+ va barcha TF mos kelishi kerak
 """
 import json, re, httpx, logging
 from datetime import datetime
 import pytz
 
 logger = logging.getLogger(__name__)
+MODEL  = "claude-haiku-4-5"
 
-# Arzon model — Haiku (Sonnet dan 10x arzon)
-MODEL = "claude-haiku-4-5"
+PAIRS = ["XAU/USD", "BTC/USDT", "EUR/USD"]
 
-SYSTEM_PROMPT = """Sen XAU/USD M5 texnik tahlilchisan. Web search bilan hozirgi narx va indikatorlarni topib, FAQAT JSON qaytargin.
+SYSTEM = """Sen professional multi-timeframe texnik tahlilchisan.
+Web search bilan HOZIRGI narxlar va indikatorlarni topib tahlil qil.
 
-Signal mezonlari (barchasi kerak):
-- RSI, MACD, EMA, Bollinger, Stochastic bir yo'nalishda
-- Faqat 75%+ kuchli signal bering
-- Trend yo'nalishiga mos bo'lsin
+TAHLIL TARTIBI:
+1. Kotta TF (1D, 4H, 1H, 30M) — asosiy trend yo'nalishini aniqlash
+2. Kirish TF (15M, 5M, 1M) — aniq kirish nuqtasini topish
+3. Faqat kotta va kirish TF bir yo'nalishda bo'lsa signal ber
 
-Kuchli signal topilsa:
-{"signal_found":true,"direction":"BUY","strength":82,"strength_stars":4,"entry_zone":"3320.00-3322.00","tp1":"3330.00","tp1_pips":30,"tp2":"3342.00","tp2_pips":60,"tp3":"3358.00","tp3_pips":110,"stop_loss":"3308.00","sl_pips":24,"risk_level":"PAST","rr_ratio":"2.5","analysis_summary":"RSI 28 oversold, MACD bullish cross, EMA50 support","invalidation":"3308 dan past tushsa"}
+SIGNAL MEZONLARI (barchasi kerak):
+- RSI (oversold/overbought)
+- MACD cross
+- EMA 9/21/50/200 alignment
+- Bollinger Bands
+- Support/Resistance
+- Volume confirmation
+- Kotta TF trend tasdiqlashi
 
-Signal yo'q bo'lsa:
-{"signal_found":false,"reason":"Sabab"}
+MUHIM: Faqat 75%+ kuchli, barcha TFda mos signal bering!
 
-FAQAT JSON, hech qanday matn yo'q."""
+FAQAT JSON qaytargin (kod bloki yo'q):
+
+Kuchli signal:
+{"signal_found":true,"pair":"XAU/USD","direction":"BUY","strength":85,"strength_stars":4,"entry_tf":"5M","entry_price":"3320.50","entry_zone":"3318.00-3322.00","tp1":"3335.00","tp1_pips":45,"tp2":"3352.00","tp2_pips":95,"tp3":"3375.00","tp3_pips":165,"stop_loss":"3308.00","sl_pips":37,"risk_level":"PAST","rr_ratio":"2.5","trend_1d":"BULLISH","trend_4h":"BULLISH","trend_1h":"BULLISH","trend_30m":"BULLISH","analysis":"RSI 28 oversold 5M, MACD bullish cross, EMA21 support, 4H uptrend intact","invalidation":"3308 yorilsa signal bekor","tp1_exit_hint":"TP1 olgandan so'ng: SL bez ubitkaga, bozor yo'nalishi o'zgarsa yoping"}
+
+Signal yo'q:
+{"signal_found":false,"pair":"XAU/USD","reason":"Sabab"}"""
 
 
 class SignalEngine:
     def __init__(self, api_key: str):
-        self.api_key  = api_key
-        self.open_trades = []
+        self.api_key = api_key
+        self.open_trades: list[dict] = []
         self.tz = pytz.timezone("Asia/Tashkent")
 
     def _hdrs(self):
@@ -49,79 +65,91 @@ class SignalEngine:
         except Exception:
             return None
 
-    async def analyze(self) -> dict | None:
+    async def _analyze_pair(self, pair: str) -> dict | None:
+        """Bitta juftni tahlil qiladi."""
+        now = datetime.now(self.tz)
+        h = now.hour
+        session = (
+            "London" if 5 <= h < 10 else
+            "London+NY" if 10 <= h < 15 else
+            "New York" if 15 <= h < 19 else "Osiyo"
+        )
+        msg = (
+            f"Vaqt: {now.strftime('%d.%m.%Y %H:%M')} Toshkent | Sessiya: {session}\n"
+            f"Juft: {pair}\n"
+            f"Web search bilan hozirgi narx, 1D/4H/1H/30M/15M/5M/1M indikatorlarni topib "
+            f"multi-timeframe tahlil qil. Faqat JSON."
+        )
         try:
-            now = datetime.now(self.tz)
-            h   = now.hour
-            session = (
-                "London ochilishi" if 5 <= h < 10 else
-                "London+NY overlap (eng faol)" if 10 <= h < 15 else
-                "New York" if 15 <= h < 19 else
-                "NY/Osiyo"
-            )
-            user_msg = (
-                f"Vaqt: {now.strftime('%d.%m.%Y %H:%M')} Toshkent | Sessiya: {session}\n"
-                f"Web search bilan hozirgi XAU/USD M5 narxi va indikatorlarni topib tahlil qil. FAQAT JSON."
-            )
-            async with httpx.AsyncClient(timeout=50) as c:
+            async with httpx.AsyncClient(timeout=55) as c:
                 r = await c.post(
                     "https://api.anthropic.com/v1/messages",
                     headers=self._hdrs(),
                     json={
                         "model": MODEL,
-                        "max_tokens": 600,
-                        "system": SYSTEM_PROMPT,
+                        "max_tokens": 700,
+                        "system": SYSTEM,
                         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
-                        "messages": [{"role": "user", "content": user_msg}]
+                        "messages": [{"role": "user", "content": msg}]
                     }
                 )
                 r.raise_for_status()
                 data = r.json()
-
-            text = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text")
+            text = "".join(b.get("text","") for b in data.get("content",[]) if b.get("type")=="text")
             result = self._parse(text)
-
             if not result or not result.get("signal_found"):
-                logger.info(f"Signal yo'q: {result.get('reason','') if result else 'parse xatosi'}")
+                reason = result.get("reason","") if result else "parse xatosi"
+                logger.info(f"{pair} signal yo'q: {reason[:80]}")
                 return None
             if result.get("strength", 0) < 75:
+                logger.info(f"{pair} kuchsiz signal: {result.get('strength')}%")
                 return None
-
             result["timestamp"] = now.strftime("%d.%m.%Y %H:%M")
-            result["status"]    = "OPEN"
-            self.open_trades.append(result.copy())
+            result["status"] = "OPEN"
             return result
-
         except Exception as e:
-            logger.error(f"Tahlil xatosi: {e}")
+            logger.error(f"{pair} tahlil xatosi: {e}")
             return None
 
+    async def analyze(self) -> list[dict]:
+        """Barcha juftlarni tahlil qiladi, kuchli signallarni qaytaradi."""
+        signals = []
+        for pair in PAIRS:
+            logger.info(f"{pair} tahlil qilinmoqda...")
+            result = await self._analyze_pair(pair)
+            if result:
+                self.open_trades.append(result.copy())
+                signals.append(result)
+                logger.info(f"✅ {pair} signal: {result['direction']} {result['strength']}%")
+        return signals
+
     async def check_open_trades(self) -> list[str]:
-        """Ochiq sdelkalarni narx bilan tekshiradi (arzon: faqat narx so'raydi)."""
+        """Ochiq sdelkalarni tekshiradi."""
         if not self.open_trades:
             return []
-
-        # Hozirgi narxni olish (1 ta kichik so'rov)
-        current_price = await self._get_current_price()
-        if not current_price:
-            return []
-
+        prices = await self._get_prices()
         messages = []
-        closed   = []
-
+        still_open = []
         for trade in self.open_trades:
-            msg = self._check_price(trade, current_price)
+            pair = trade.get("pair", "XAU/USD")
+            price = prices.get(pair)
+            if price is None:
+                still_open.append(trade)
+                continue
+            msg = self._check_price(trade, price)
             if msg:
                 messages.append(msg)
-                closed.append(trade)
-
-        for t in closed:
-            self.open_trades.remove(t)
-
+                # TP1 olindi — trade hali ochiq, SL bez ubitkaga
+                if trade.get("status") == "TP1":
+                    still_open.append(trade)
+                # TP2, TP3, SL — yopildi
+            else:
+                still_open.append(trade)
+        self.open_trades = still_open
         return messages
 
-    async def _get_current_price(self) -> float | None:
-        """Web search bilan hozirgi XAU/USD narxini oladi."""
+    async def _get_prices(self) -> dict:
+        """Barcha juftlar narxini oladi."""
         try:
             async with httpx.AsyncClient(timeout=30) as c:
                 r = await c.post(
@@ -129,87 +157,110 @@ class SignalEngine:
                     headers=self._hdrs(),
                     json={
                         "model": MODEL,
-                        "max_tokens": 50,
+                        "max_tokens": 100,
                         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
                         "messages": [{"role": "user", "content":
-                            "XAU/USD current price right now. Reply ONLY with the number, e.g.: 3325.50"}]
+                            "Current prices: XAU/USD gold, BTC/USDT bitcoin, EUR/USD. "
+                            "Reply ONLY JSON: {\"XAU/USD\":3320.50,\"BTC/USDT\":67500.0,\"EUR/USD\":1.0850}"}]
                     }
                 )
                 data = r.json()
                 text = "".join(b.get("text","") for b in data.get("content",[]) if b.get("type")=="text")
-                m = re.search(r'\d{3,4}\.?\d{0,2}', text)
-                return float(m.group()) if m else None
+                m = re.search(r'\{[^{}]*\}', text)
+                if m:
+                    return json.loads(m.group())
         except Exception as e:
             logger.error(f"Narx olish xatosi: {e}")
-            return None
+        return {}
 
     def _check_price(self, trade: dict, price: float) -> str | None:
-        """Narxni TP/SL bilan solishtiradi — AI siz."""
+        """Narxni TP/SL bilan solishtiradi va bozor o'zgarishini ham tekshiradi."""
         try:
-            direction = trade["direction"]
+            d   = trade["direction"]
             tp1 = float(trade["tp1"])
             tp2 = float(trade["tp2"])
+            tp3 = float(trade["tp3"])
             sl  = float(trade["stop_loss"])
-            entry_str = trade["entry_zone"].split("-")[0]
-            entry = float(entry_str)
-
             now = datetime.now(self.tz).strftime("%H:%M")
+            pair = trade.get("pair","XAU/USD")
+            status = trade.get("status","OPEN")
 
-            if direction == "BUY":
-                if price >= tp2:
+            if d == "BUY":
+                if price >= tp3:
+                    trade["status"] = "TP3"
+                    return self._fmt("tp3_hit", trade, price, now)
+                if price >= tp2 and status == "TP1":
                     trade["status"] = "TP2"
-                    return self._fmt_update(trade, "tp2_hit", price, now)
-                if price >= tp1:
+                    return self._fmt("tp2_hit", trade, price, now)
+                if price >= tp1 and status == "OPEN":
                     trade["status"] = "TP1"
-                    return self._fmt_update(trade, "tp1_hit", price, now)
+                    return self._fmt("tp1_hit", trade, price, now)
                 if price <= sl:
                     trade["status"] = "SL"
-                    return self._fmt_update(trade, "sl_hit", price, now)
+                    return self._fmt("sl_hit", trade, price, now)
             else:  # SELL
-                if price <= tp2:
+                if price <= tp3:
+                    trade["status"] = "TP3"
+                    return self._fmt("tp3_hit", trade, price, now)
+                if price <= tp2 and status == "TP1":
                     trade["status"] = "TP2"
-                    return self._fmt_update(trade, "tp2_hit", price, now)
-                if price <= tp1:
+                    return self._fmt("tp2_hit", trade, price, now)
+                if price <= tp1 and status == "OPEN":
                     trade["status"] = "TP1"
-                    return self._fmt_update(trade, "tp1_hit", price, now)
+                    return self._fmt("tp1_hit", trade, price, now)
                 if price >= sl:
                     trade["status"] = "SL"
-                    return self._fmt_update(trade, "sl_hit", price, now)
+                    return self._fmt("sl_hit", trade, price, now)
         except Exception as e:
             logger.error(f"Narx tekshirish xatosi: {e}")
         return None
 
-    def _fmt_update(self, trade: dict, status: str, price: float, now: str) -> str:
-        d = "🟢 BUY" if trade["direction"] == "BUY" else "🔴 SELL"
+    def _fmt(self, status: str, trade: dict, price: float, now: str) -> str:
+        d    = "🟢 BUY" if trade["direction"] == "BUY" else "🔴 SELL"
+        pair = trade.get("pair", "XAU/USD")
+        pair_emoji = {"XAU/USD":"🥇","BTC/USDT":"₿","EUR/USD":"💶"}.get(pair,"📊")
+
         if status == "tp1_hit":
             return (
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-                f"<b>✅ TP1 OLINDI!</b>  {d}\n"
+                f"<b>✅ TP1 OLINDI!</b> {pair_emoji} {pair} {d}\n"
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-                f"Narx: <code>{price}</code>  →  TP1: <code>{trade['tp1']}</code>\n\n"
-                f"💡 <b>TAVSIYA:</b>\n"
-                f"✔️ SL ni kirish nuqtasiga (BEZ UBYTOK) oling!\n"
-                f"✔️ Qolgan pozitsiyani TP2/TP3 ga qoldiring.\n\n"
+                f"Narx <code>{price}</code> → TP1 <code>{trade['tp1']}</code>\n\n"
+                f"⚡ <b>DARHOL BAJARING:</b>\n"
+                f"✔️ SL ni kirish narxiga (BEZ UBYTOK) oling!\n"
+                f"✔️ Bozor yo'nalishi o'zgarsa — YOPING!\n"
+                f"✔️ Qolgan pozitsiyani TP2 <code>{trade['tp2']}</code> ga qoldiring\n\n"
                 f"<i>🕐 {now}</i>"
             )
         elif status == "tp2_hit":
             return (
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-                f"<b>✅✅ TP2 OLINDI!</b>  {d}\n"
+                f"<b>✅✅ TP2 OLINDI!</b> {pair_emoji} {pair} {d}\n"
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-                f"Narx: <code>{price}</code>  →  TP2: <code>{trade['tp2']}</code>\n\n"
-                f"💡 <b>TAVSIYA:</b>\n"
-                f"✔️ Pozitsiyaning yarmi yopilsin!\n"
-                f"✔️ SL ni TP1 darajasiga ko'taring.\n"
-                f"✔️ Qolganini TP3 ga qoldiring.\n\n"
+                f"Narx <code>{price}</code> → TP2 <code>{trade['tp2']}</code>\n\n"
+                f"⚡ <b>DARHOL BAJARING:</b>\n"
+                f"✔️ Pozitsiyaning 50-70% ini yoping!\n"
+                f"✔️ SL ni TP1 <code>{trade['tp1']}</code> ga ko'taring\n"
+                f"✔️ Qolganini TP3 <code>{trade['tp3']}</code> ga qoldiring\n"
+                f"⚠️ Bozor zaiflashsa — hammasini yoping!\n\n"
+                f"<i>🕐 {now}</i>"
+            )
+        elif status == "tp3_hit":
+            return (
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+                f"<b>🏆 TP3 OLINDI!</b> {pair_emoji} {pair} {d}\n"
+                f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+                f"Narx <code>{price}</code> → TP3 <code>{trade['tp3']}</code>\n\n"
+                f"✅ <b>Pozitsiyani to'liq yoping!</b>\n"
+                f"🎉 Mukammal savdo! Keyingi signalni kuting.\n\n"
                 f"<i>🕐 {now}</i>"
             )
         else:  # sl_hit
             return (
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-                f"<b>🛑 STOP LOSS URILDI!</b>  {d}\n"
+                f"<b>🛑 STOP LOSS URILDI</b> {pair_emoji} {pair} {d}\n"
                 f"<b>━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
-                f"Narx: <code>{price}</code>  →  SL: <code>{trade['stop_loss']}</code>\n\n"
-                f"<i>Risk menejment to'g'ri ishladi. Keyingi signal kuting.</i>\n\n"
+                f"Narx <code>{price}</code> → SL <code>{trade['stop_loss']}</code>\n\n"
+                f"<i>Risk menejment ishladi. Keyingi signalni kuting.</i>\n\n"
                 f"<i>🕐 {now}</i>"
             )

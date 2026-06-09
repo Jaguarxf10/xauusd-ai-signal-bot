@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ICT Multi-Pair Signal Bot — XAU/USD, BTC/USDT, EUR/USD"""
+"""XAU/USD Signal Bot — Kuniga kamida 2x signal kafolatlangan"""
 import asyncio, logging, os
 from datetime import datetime
 import pytz
@@ -24,7 +24,6 @@ tz        = pytz.timezone(TIMEZONE)
 bot        = Bot(token=BOT_TOKEN)
 signal_eng = SignalEngine(api_key=API_KEY)
 daily_rep  = DailyReport()
-PEMOJI     = {"XAU/USD": "🥇", "BTC/USDT": "₿", "EUR/USD": "💶"}
 
 
 def is_open() -> bool:
@@ -39,71 +38,54 @@ async def send(text: str):
 
 
 def tf_icon(t: str) -> str:
-    t = t.upper()
-    return "🟢" if "BULL" in t else "🔴" if "BEAR" in t else "🟡"
+    return "🟢" if "BULL" in t.upper() else "🔴" if "BEAR" in t.upper() else "🟡"
 
 
 def fmt_signal(r: dict) -> str:
     emoji = "🟢 BUY" if r["direction"] == "BUY" else "🔴 SELL"
     stars = "⭐" * r.get("strength_stars", 4)
-    pair  = r.get("pair", "XAU/USD")
-    pe    = PEMOJI.get(pair, "📊")
     tf    = r.get("entry_tf", "5M")
-
-    t1d   = r.get("trend_1d",  "—")
-    t4h   = r.get("trend_4h",  "—")
-    t1h   = r.get("trend_1h",  "—")
-    t30m  = r.get("trend_30m", "—")
-
-    ict   = r.get("ict_setup",        "—")
-    ob    = r.get("ob_zone",          "—")
-    fvg   = r.get("fvg_zone",         "—")
-    liq   = r.get("liquidity",        "—")
-    bos   = r.get("bos_choch",        "—")
-    pd    = r.get("premium_discount", "—")
+    t1h   = r.get("trend_1h", "—")
+    t5m   = r.get("trend_5m", "—")
+    guar  = "🔔 <b>KAFOLATLANGAN SIGNAL</b>\n" if r.get("guaranteed") else ""
 
     return (
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-        f"<b>{pe} {pair} · {tf} · ICT SIGNAL</b>\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+        f"{guar}"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+        f"<b>🥇 XAU/USD · {tf} · SIGNAL</b>\n"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
         f"<b>Yo'nalish:</b> {emoji}\n"
-        f"<b>Ishonchlilik:</b> {stars} {r['strength']}%\n\n"
-        f"<b>📊 Multi-TF Trend:</b>\n"
-        f"  1D {tf_icon(t1d)}{t1d}  ·  4H {tf_icon(t4h)}{t4h}\n"
-        f"  1H {tf_icon(t1h)}{t1h}  ·  30M {tf_icon(t30m)}{t30m}\n\n"
-        f"<b>🏦 ICT Setup:</b> <i>{ict}</i>\n\n"
-        f"<b>📦 Order Block:</b> <code>{ob}</code>\n"
-        f"<b>🌀 FVG zona:</b> <code>{fvg}</code>\n"
-        f"<b>💧 Likvidlik:</b> <i>{liq}</i>\n"
-        f"<b>🔓 BOS/CHoCH:</b> <i>{bos}</i>\n"
-        f"<b>📐 Premium/Discount:</b> <i>{pd}</i>\n\n"
-        f"<b>📍 Kirish TF:</b> {tf}\n"
-        f"<b>📍 Kirish narxi:</b> <code>{r.get('entry_price', r['entry_zone'])}</code>\n"
+        f"<b>Kuch:</b> {stars} {r['strength']}%\n\n"
+        f"<b>📊 Trend:</b>\n"
+        f"  1H: {tf_icon(t1h)} {t1h}  ·  5M: {tf_icon(t5m)} {t5m}\n\n"
+        f"<b>📍 Hozirgi narx:</b> <code>{r.get('current_price','—')}</code>\n"
         f"<b>📍 Kirish zonasi:</b> <code>{r['entry_zone']}</code>\n\n"
         f"<b>🎯 Take Profit:</b>\n"
         f"   TP1 → <code>{r['tp1']}</code>  (+{r['tp1_pips']} pip)\n"
         f"   TP2 → <code>{r['tp2']}</code>  (+{r['tp2_pips']} pip)\n"
         f"   TP3 → <code>{r['tp3']}</code>  (+{r['tp3_pips']} pip)\n\n"
         f"<b>🛑 Stop Loss:</b> <code>{r['stop_loss']}</code>  (-{r['sl_pips']} pip)\n"
-        f"<b>⚖️ Risk/Reward:</b> 1:{r['rr_ratio']}  |  {r['risk_level']}\n\n"
+        f"<b>⚖️ R:R:</b> 1:{r['rr_ratio']}  ·  Risk: {r['risk_level']}\n\n"
+        f"<b>📦 Lot hajmi:</b> {r.get('lot_min','0.01')} – {r.get('lot_max','0.03')} lot\n\n"
+        f"<b>🏦 ICT:</b> <i>{r.get('ict_note','—')}</i>\n"
+        f"<b>🔑 Kalit daraja:</b> <i>{r.get('key_level','—')}</i>\n\n"
         f"<b>🔍 Tahlil:</b>\n<i>{r.get('analysis','—')}</i>\n\n"
-        f"<b>❌ Bekor holat:</b> <i>{r.get('invalidation','—')}</i>\n\n"
+        f"<b>❌ Bekor:</b> <i>{r.get('invalidation','—')}</i>\n\n"
         f"<b>⏰</b> {r['timestamp']}\n"
-        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━━━</b>\n"
-        f"<i>⚡ TP1 olgach → SL BEZ UBYTOKKA!\n"
-        f"⚡ Bozor qarshiga o'zgarsa → DARHOL YOPING!</i>"
+        f"<b>━━━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+        f"<i>⚡ TP1 olgach — SL BEZ UBYTOKKA!\n"
+        f"⚡ Bozor teskari ketsa — DARHOL YOPING!</i>"
     )
 
 
 async def job_signal():
     if not is_open():
         return
-    logger.info("ICT tahlil boshlandi (3 juft)...")
+    logger.info("Signal tekshirilmoqda...")
     signals = await signal_eng.analyze()
     for r in signals:
         daily_rep.add_signal(r)
         await send(fmt_signal(r))
-        logger.info(f"✅ {r.get('pair')} {r['direction']} {r['strength']}%")
 
 
 async def job_tp_sl():
@@ -119,19 +101,16 @@ async def job_daily():
 async def main():
     logger.info(f"Bot ishga tushdi. CHAT_ID={CHAT_ID}")
     await send(
-        "🤖 <b>ICT AI Signal Bot — FAOL!</b>\n\n"
-        "📊 <b>Juftlar:</b> 🥇 XAU/USD · ₿ BTC/USDT · 💶 EUR/USD\n\n"
-        "🏦 <b>ICT Konseptlar:</b>\n"
-        "  📦 Order Blocks (OB)\n"
-        "  🌀 Fair Value Gaps (FVG/IFVG)\n"
-        "  💧 Liquidity Zones (BSL/SSL)\n"
-        "  🔓 BOS · CHoCH · MSS\n"
-        "  📐 Premium/Discount Zones\n"
-        "  🎯 OTE (Optimal Trade Entry)\n\n"
-        "🔍 <b>Trend:</b> 1D → 4H → 1H → 30M\n"
-        "⚡ <b>Kirish:</b> 15M / 5M / 1M\n"
-        "✅ <b>Filtr:</b> 75%+ · Barcha TF mos · R:R ≥ 1:2\n\n"
-        "⏰ Har 5 daqiqada · 05:00–23:00 Toshkent"
+        "🤖 <b>XAU/USD Signal Bot — YANGILANDI!</b>\n\n"
+        "📊 Juft: 🥇 XAU/USD\n"
+        "⏱ Taymfreym: 1M / 5M\n"
+        "📦 Lot: 0.01 – 0.03\n\n"
+        "✅ <b>Kuniga KAMIDA 2 signal kafolatlangan:</b>\n"
+        "   🔔 09:00 — London sessiyasi\n"
+        "   🔔 15:00 — New York sessiyasi\n\n"
+        "🔍 Har 5 daqiqada tahlil\n"
+        "⚡ TP/SL hit xabarlari darhol\n"
+        "⏰ 05:00–23:00 Toshkent"
     )
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
     scheduler.add_job(job_signal, "interval", minutes=5)

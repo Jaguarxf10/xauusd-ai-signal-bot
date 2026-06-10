@@ -113,6 +113,9 @@ async def main():
     s.add_job(job_daily,  "cron", hour=23, minute=0)
     s.start()
     logger.info("✅ Scheduler started")
+    # Darhol birinchi signal
+    await asyncio.sleep(3)
+    await job_signal()
     try:
         while True:
             await asyncio.sleep(3600)

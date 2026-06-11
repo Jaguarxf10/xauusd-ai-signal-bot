@@ -179,8 +179,8 @@ FAQAT JSON (boshqa matn yo'q):
 
         # ── 1. Bepul narx va indikatorlar ──────────────────
         logger.info("Yahoo Finance dan XAU/USD ma'lumotlari olinmoqda...")
-        data5m = await get_ohlcv("XAU/USD", "5m", 60)
-        data1h = await get_ohlcv("XAU/USD", "1h", 50)
+        data5m = await get_ohlcv("XAU/USD", "5m", 60, self.api_key)
+        data1h = await get_ohlcv("XAU/USD", "1h", 50, self.api_key)
 
         if not data5m or not data5m["candles"]:
             logger.warning("Yahoo Finance dan ma'lumot kelmadi")
@@ -284,7 +284,7 @@ FAQAT JSON (boshqa matn yo'q):
     async def check_open_trades(self) -> list[str]:
         if not self.open_trades:
             return []
-        data = await get_ohlcv("XAU/USD", "1m", 5)
+        data = await get_ohlcv("XAU/USD", "1m", 5, self.api_key)
         if not data:
             return []
         price = data["current_price"]
